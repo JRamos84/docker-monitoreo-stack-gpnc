@@ -37,3 +37,11 @@ scrape_configs:
       - targets: [ 'cadvisor:8080' ]
         labels:
           container: 'cadvisor'
+  - job_name: 'django_web_app'
+    metrics_path: '/prometheus/' # El endpoint que configuraste en Django
+    static_configs:
+      - targets: ['web:8000'] #
+  - job_name: 'django_daphne_app' # Mantén este si Daphne también sirve el endpoint /prometheus/
+    metrics_path: '/prometheus/'
+    static_configs:
+      - targets: ['daphne:9001']

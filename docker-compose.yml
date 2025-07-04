@@ -1,5 +1,9 @@
-version: '3.8'
+# docker-compose-monitoring.yml (Stack de Monitoreo - Completo y Corregido)
 
+# La versión ya no es necesaria en Docker Compose V2+
+# version: '3.8' 
+
+# --- Variables de Logging y Etiquetas Comunes para Monitoreo ---
 x-logging:
   &default-logging
   driver: "json-file"
@@ -11,19 +15,19 @@ x-logging:
 x-common-labels: &default-labels
   logging: "promtail"
   logging_jobname: "containerlogs"
-  stackname: "docker-monitoring-stack-gpnc"
+  stackname: "docker-monitoring-stack-ramos" # Nombre del stack para tus logs en Loki
 
 services:
   grafana:
-    image: grafana/grafana:${GRAFANA_VERSION:-12.0.0}
+    image: grafana/grafana:${GRAFANA_VERSION:-10.4.2} # Usar versión específica para estabilidad
     container_name: grafana
     restart: unless-stopped
     environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true # Cambiar a false en producción y configurar usuarios
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_USERS_DEFAULT_THEME=light
       - GF_LOG_MODE=console
-      - GF_LOG_LEVEL=critical
+      - GF_LOG_LEVEL=warn # Cambiado a warn para menos logs
       - GF_PANELS_ENABLE_ALPHA=true
       - GF_FEATURE_TOGGLES_ENABLE=accessControlOnCall lokiLogsDataplane
       - GF_INSTALL_PLUGINS=grafana-polystat-panel
@@ -36,18 +40,20 @@ services:
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
+      - loki # Depende de Loki para logs
     ports:
-      - 3000:3000
+      - 3000:3000 # Puerto de acceso a Grafana desde el host
     cpus: 0.5
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
   prometheus:
-    image: prom/prometheus:${PROMETHEUS_VERSION:-v2.42.0}
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v2.51.1} # Usar versión específica para estabilidad
     container_name: prometheus
     restart: unless-stopped
     command:
@@ -59,51 +65,51 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.external-url=http://localhost:9090'
     volumes:
-      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./configs/prometheus/recording-rules.yml:/etc/prometheus/recording-rules.yml
-      - ./configs/prometheus/alerting-rules.yml:/etc/prometheus/alerting-rules.yml
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro # Solo lectura
+      - ./configs/prometheus/recording-rules.yml:/etc/prometheus/recording-rules.yml:ro # Solo lectura
+      - ./configs/prometheus/alerting-rules.yml:/etc/prometheus/alerting-rules.yml:ro # Solo lectura
       - prometheus-data:/prometheus
     depends_on:
       - alertmanager
     ports:
-      - 9090:9090
+      - 9090:9090 # Puerto de acceso a Prometheus desde el host
     cpus: 0.5
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION:-v0.46.0}
+    image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION:-v0.47.0} # Usar versión específica para estabilidad
     container_name: cadvisor
     restart: unless-stopped
-    privileged: true
+    privileged: true # Necesario para acceder a información del host
     volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:rw
-      - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
-        # https://github.com/google/cadvisor/issues/1565#issuecomment-718812180
-      - /var/run/docker.sock:/var/run/docker.sock
-      #- /dev/disk:/dev/disk:ro
+      - /:/rootfs:ro # Monta la raíz del host en modo solo lectura
+      - /var/run:/var/run:rw # Necesario para cAdvisor
+      - /sys:/sys:ro # Acceso a información del sistema
+      - /var/lib/docker:/var/lib/docker:ro # Acceso a datos de Docker
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Acceso al socket de Docker
     cpus: 0.5
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
   node-exporter:
-    image: prom/node-exporter:${NODE_EXPORTER_VERSION:-v1.5.0}
+    image: prom/node-exporter:${NODE_EXPORTER_VERSION:-v1.8.1} # Usar versión específica para estabilidad
     container_name: node-exporter
     restart: unless-stopped
     volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
+      - /proc:/host/proc:ro # Acceso a información del proceso
+      - /sys:/host/sys:ro # Acceso a información del sistema
+      - /:/rootfs:ro # Acceso a la raíz del host
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
@@ -113,12 +119,13 @@ services:
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
   alertmanager:
-    image: prom/alertmanager:${ALERTMANAGER_VERSION:-v0.25.0}
+    image: prom/alertmanager:${ALERTMANAGER_VERSION:-v0.27.0} # Usar versión específica para estabilidad
     container_name: alertmanager
     command:
       - '--config.file=/etc/alertmanager/config.yml'
@@ -126,13 +133,14 @@ services:
       - '--storage.path=/alertmanager'
       - '--web.external-url=http://localhost:9093'
     volumes:
-      - ./configs/alertmanager/alertmanager-fallback-config.yml:/etc/alertmanager/config.yml
+      - ./configs/alertmanager/alertmanager-fallback-config.yml:/etc/alertmanager/config.yml:ro # Solo lectura
     ports:
-      - 9093:9093
+      - 9093:9093 # Puerto de acceso a Alertmanager desde el host
     cpus: 0.5
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     depends_on:
       - uncomplicated-alert-receiver
     labels:
@@ -143,53 +151,83 @@ services:
     image: ghcr.io/jamesread/uncomplicated-alert-receiver
     container_name: uncomplicated-alert-receiver
     ports:
-      - 9094:8080
+      - 9094:8080 # Puerto de acceso a Alert Receiver desde el host
     cpus: 0.5
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
-  redis:
-    image: redis:${REDIS_VERSION:-6}
-    container_name: redis
-    ports:
-      - 6379:6379
-    cpus: 0.5
-    mem_limit: 512m
+  # --- EXPORTERS PARA TUS SERVICIOS DE APLICACIÓN ---
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.12.0
+    container_name: postgres_exporter
+    restart: unless-stopped
+    env_file: # Lee las variables de DB desde el archivo de entorno del monitoreo
+      - ./.env 
+    environment:
+      # Apunta a tu servicio 'db' en la red compartida (nombre del servicio en el otro Compose)
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable" 
+    # depends_on: # ELIMINADO: No se puede depender de servicios en otro archivo Compose
+    #   - db 
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
+  redis-exporter:
+    image:  quay.io/oliver006/redis_exporter:v1.44.0 
+    container_name: redis_exporter
+    restart: unless-stopped
+    env_file: # Lee las variables de Redis desde el archivo de entorno del monitoreo
+      - ./.env 
+    environment:
+      # Apunta a tu servicio 'redis' en la red compartida (nombre del servicio en el otro Compose)
+      REDIS_ADDR: "redis://redis:6379" 
+      # Si Redis requiere autenticación, añade:
+      # REDIS_PASSWORD: ${REDIS_PASSWORD} # La variable se leerá de monitoring.env
+    # depends_on: # ELIMINADO: No se puede depender de servicios en otro archivo Compose
+    #   - redis 
+    networks:
+      - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
+    labels:
+      <<: *default-labels
+    logging: *default-logging
+
+  # --- SERVICIOS DE LOGGING (LOKI/PROMTAIL) ---
   loki:
     image: grafana/loki:3.3.2
     container_name: loki
-    user: root
+    user: root # Loki necesita permisos de root para escribir en volúmenes
     ports:
-      - 3100:3100
+      - 3100:3100 # Puerto de acceso a Loki desde el host
     command: -config.file=/etc/loki/loki.yaml
     volumes:
-      - ./configs/loki/loki.yaml:/etc/loki/loki.yaml
-      - ./configs/loki/rules.yaml:/etc/loki/rules/fake/loki-rules.yml
+      - ./configs/loki/loki.yaml:/etc/loki/loki.yaml:ro # Solo lectura
+      - ./configs/loki/rules.yaml:/etc/loki/rules/fake/loki-rules.yml:ro # Solo lectura
+      - loki-data:/loki # Volumen para persistir los logs de Loki
     cpus: 0.5
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
   promtail:
-    image:  grafana/promtail:3.3.2
+    image: grafana/promtail:3.3.2
     container_name: promtail
     volumes:
-      - ./configs/promtail/promtail.yaml:/etc/promtail/docker-config.yaml
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./configs/promtail/promtail.yaml:/etc/promtail/docker-config.yaml:ro # Solo lectura
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro # Acceso a los logs de Docker
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Acceso al socket de Docker para descubrir contenedores
     command: -config.file=/etc/promtail/docker-config.yaml
     depends_on:
       - loki
@@ -197,14 +235,20 @@ services:
     mem_limit: 512m
     networks:
       - monitoring
+      - ramos_shared_monitoring_network # Conecta a la red compartida con tu app
     labels:
       <<: *default-labels
     logging: *default-logging
 
+# --- DEFINICIÓN DE VOLÚMENES NOMBRADOS PARA EL STACK DE MONITOREO ---
 volumes:
   grafana-data: {}
   prometheus-data: {}
+  loki-data: {} # Volumen para los logs de Loki
 
 networks:
   monitoring:
-    name: monitoring
+    name: monitoring # Red interna del stack de monitoreo
+  ramos_shared_monitoring_network: # Red compartida con tu app principal
+    external: true
+    name: ramos_shared_monitoring_network # MISMO NOMBRE DE LA RED QUE CREASTE MANUALMENTE
